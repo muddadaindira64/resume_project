@@ -1,9 +1,10 @@
 langchain==0.1.11
 pypdf==4.0.1
-sentence-transformers==2.2.2
-chromadb==0.4.13
-python-dotenv==1.0.0
-pydantic==2.5.0
+chromadb==0.4.24
+sentence-transformers==2.2.0
+transformers==4.33.2
+huggingface-hub==0.20.3
+tokenizers==0.13.2
 numpy==1.24.3
-torch==2.1.1
-transformers==4.36.0
+python-dotenv==1.0.0
+pydantic==1.10.13
