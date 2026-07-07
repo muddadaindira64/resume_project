@@ -21,12 +21,10 @@ __pycache__/
 .DS_Store
 
 # Data and Databases
-vector_db/
 *.db
 *.sqlite
 
 # Resumes (Input data - not tracked)
-resumes/*.pdf
 
 # Environment variables
 .env
