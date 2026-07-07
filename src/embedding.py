@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 
 import chromadb
-from langchain.schema import Document
+from langchain_core.documents import Document
 from sentence_transformers import SentenceTransformer
 
 # Configure logger for this module

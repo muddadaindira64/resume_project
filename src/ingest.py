@@ -18,8 +18,8 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
-from langchain.document_loaders import PyPDFLoader
-from langchain.schema import Document
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
