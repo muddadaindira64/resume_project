@@ -19,11 +19,8 @@ Dependencies:
 import logging
 from typing import List, Optional
 
-try:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-except ImportError:  # pragma: no cover - compatibility for newer langchain versions
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
