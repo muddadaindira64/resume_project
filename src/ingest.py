@@ -18,8 +18,8 @@ import os
 from pathlib import Path
 from typing import List
 
-from langchain.document_loaders import PyPDFLoader
-from langchain.schema import Document
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
 
 try:
     from src.preprocess import clean_resume_text
