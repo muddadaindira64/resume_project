@@ -16,10 +16,15 @@ Dependencies:
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
+
+try:
+    from src.preprocess import clean_resume_text
+except ModuleNotFoundError:  # pragma: no cover - supports script execution
+    from preprocess import clean_resume_text
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -28,6 +33,24 @@ logger = logging.getLogger(__name__)
 class PDFProcessingError(Exception):
     """Raised when PDF processing fails."""
     pass
+
+
+def _derive_person_name(file_path: Path, text: str) -> str:
+    """Infer a person name from the filename or the extracted text."""
+    stem = file_path.stem.replace("_", " ").replace("-", " ")
+    stem_tokens = [token for token in stem.split() if token.lower() not in {"resume", "cv", "profile"}]
+
+    if stem_tokens:
+        return " ".join(stem_tokens).strip().title()
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in lines[:10]:
+        if len(line.split()) <= 4 and not any(char.isdigit() for char in line):
+            candidate = line.replace("|", " ").strip()
+            if candidate and candidate.lower() not in {"resume", "curriculum vitae"}:
+                return candidate.title()
+
+    return file_path.stem.replace("_", " ").title()
 
 
 def load_single_resume(file_path: str) -> Document:
@@ -67,23 +90,27 @@ def load_single_resume(file_path: str) -> Document:
         logger.debug(f"Loading resume: {file_path}")
         loader = PyPDFLoader(file_path)
         pages = loader.load()
-        
-        # Combine all pages into a single document
-        combined_content = "\n".join([page.page_content for page in pages])
-        
-        # Create a single document with metadata
-        document = Document(
-            page_content=combined_content,
-            metadata={
-                "source": file_path,
-                "filename": os.path.basename(file_path),
-                "total_pages": len(pages)
-            }
+
+        combined_content = "\n\n".join(page.page_content for page in pages if getattr(page, "page_content", ""))
+        cleaned_content = clean_resume_text(combined_content)
+
+        metadata = {
+            "person_name": _derive_person_name(Path(file_path), cleaned_content),
+            "source_filename": os.path.basename(file_path),
+            "source": os.path.basename(file_path),
+            "document_type": "resume",
+            "total_pages": len(pages),
+        }
+
+        document = Document(page_content=cleaned_content, metadata=metadata)
+
+        logger.info(
+            "Successfully loaded resume: %s (%s pages, %s characters)",
+            os.path.basename(file_path),
+            len(pages),
+            len(cleaned_content),
         )
-        
-        logger.info(f"Successfully loaded resume: {os.path.basename(file_path)} "
-                   f"({len(pages)} pages, {len(combined_content)} characters)")
-        
+
         return document
         
     except Exception as e:

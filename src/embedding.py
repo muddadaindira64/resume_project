@@ -1,366 +1,181 @@
-"""
-Embedding Generation and Vector Database Module
+"""Semantic embedding pipeline for resume RAG using SentenceTransformers and ChromaDB."""
 
-This module handles generating semantic embeddings for text chunks and
-storing them in a ChromaDB vector database for efficient retrieval.
-
-The module uses Sentence Transformers for embedding generation, which provides
-high-quality semantic embeddings suitable for similarity search.
-
-Key Components:
-    - EmbeddingService: Main class for embedding and storage operations
-
-Dependencies:
-    - sentence-transformers: For semantic embedding generation
-    - chromadb: For vector database operations
-    - typing: Type hints for better code clarity
-"""
+from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import Any, Dict, List
 
 import chromadb
 from langchain_core.documents import Document
 from sentence_transformers import SentenceTransformer
 
-# Configure logger for this module
 logger = logging.getLogger(__name__)
 
-# Default embedding model
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
 class EmbeddingError(Exception):
     """Raised when embedding generation or storage fails."""
-    pass
 
 
 class EmbeddingService:
-    """
-    Service class for generating embeddings and managing vector database.
-    
-    This class encapsulates all operations related to embedding generation
-    and vector database management using ChromaDB.
-    
-    Attributes:
-        model_name: Name of the sentence-transformers model to use
-        model: Loaded SentenceTransformer model
-        client: ChromaDB client for vector database operations
-        db_path: Path where ChromaDB is stored
-        collection: ChromaDB collection for resume embeddings
-        
-    Example:
-        >>> service = EmbeddingService(db_path="vector_db/chroma_db")
-        >>> service.embed_and_store(chunks)
-        >>> results = service.search("Python developer with 5 years experience", k=5)
-    """
-    
+    """Generate semantic embeddings for full resume documents and store them in ChromaDB."""
+
     def __init__(
         self,
         model_name: str = DEFAULT_EMBEDDING_MODEL,
-        db_path: str = "vector_db/chroma_db",
-        collection_name: str = "resume_collection"
-    ):
-        """
-        Initialize the EmbeddingService.
-        
-        Args:
-            model_name: Name of sentence-transformers model (default: all-MiniLM-L6-v2)
-            db_path: Path to store ChromaDB (default: vector_db/chroma_db)
-            collection_name: Name of the ChromaDB collection (default: resume_collection)
-            
-        Raises:
-            EmbeddingError: If model loading or database initialization fails
-            
-        Example:
-            >>> # Using default model
-            >>> service = EmbeddingService()
-            
-            >>> # Using custom model
-            >>> service = EmbeddingService(
-            ...     model_name="all-mpnet-base-v2",
-            ...     db_path="data/vectors"
-            ... )
-        """
+        db_path: str = "vector_db",
+        collection_name: str = "resume_collection",
+    ) -> None:
+        """Initialize the embedding model and persistent ChromaDB collection."""
         try:
             self.model_name = model_name
-            self.db_path = db_path
+            self.db_path = str(Path(db_path))
             self.collection_name = collection_name
-            
-            logger.info(f"Initializing EmbeddingService with model: {model_name}")
-            
-            # Load embedding model
-            logger.debug(f"Loading sentence-transformers model: {model_name}")
+
+            Path(self.db_path).mkdir(parents=True, exist_ok=True)
+            logger.info("Initializing EmbeddingService with model '%s'", model_name)
+
             self.model = SentenceTransformer(model_name)
-            logger.info(f"Model loaded successfully. Embedding dimension: "
-                       f"{self.model.get_sentence_embedding_dimension()}")
-            
-            # Initialize ChromaDB
-            logger.debug(f"Initializing ChromaDB at: {db_path}")
-            self.client = chromadb.PersistentClient(path=db_path)
-            
-            # Get or create collection
+            self.client = chromadb.PersistentClient(path=self.db_path)
             self.collection = self.client.get_or_create_collection(
-                name=collection_name,
-                metadata={"hnsw:space": "cosine"}
+                name=self.collection_name,
+                metadata={"hnsw:space": "cosine"},
             )
-            logger.info(f"ChromaDB collection '{collection_name}' ready. "
-                       f"Current size: {self.collection.count()}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize EmbeddingService: {str(e)}")
-            raise EmbeddingError(
-                f"Failed to initialize EmbeddingService: {str(e)}"
-            ) from e
-    
+
+            logger.info(
+                "ChromaDB collection '%s' ready at '%s' with %s document(s)",
+                self.collection_name,
+                self.db_path,
+                self.collection.count(),
+            )
+        except Exception as exc:
+            logger.error("Failed to initialize EmbeddingService: %s", exc)
+            raise EmbeddingError(f"Failed to initialize EmbeddingService: {exc}") from exc
+
+    def _prepare_metadata(self, document: Document) -> Dict[str, Any]:
+        """Create a metadata payload with the required resume fields."""
+        metadata = dict(document.metadata or {})
+        metadata["person_name"] = metadata.get("person_name") or metadata.get("name") or "Unknown"
+        metadata["source_filename"] = (
+            metadata.get("source_filename")
+            or metadata.get("source")
+            or metadata.get("filename")
+            or "unknown.pdf"
+        )
+        return metadata
+
     def embed_text(self, text: str) -> List[float]:
-        """
-        Generate embedding for a single text chunk.
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            Embedding vector as list of floats
-            
-        Raises:
-            EmbeddingError: If embedding generation fails
-            
-        Example:
-            >>> embedding = service.embed_text("Python developer")
-            >>> print(len(embedding))  # Embedding dimension
-            384
-        """
+        """Generate a semantic embedding for a single resume text."""
         if not text or not isinstance(text, str):
             logger.error("Invalid text input for embedding")
             raise EmbeddingError("Text must be a non-empty string")
-        
+
         try:
-            logger.debug(f"Generating embedding for text of length {len(text)}")
-            embedding = self.model.encode(text, convert_to_tensor=False).tolist()
-            return embedding
-            
-        except Exception as e:
-            logger.error(f"Error generating embedding: {str(e)}")
-            raise EmbeddingError(f"Failed to generate embedding: {str(e)}") from e
-    
+            logger.debug("Generating embedding for text of length %s", len(text))
+            return self.model.encode(text, convert_to_tensor=False).tolist()
+        except Exception as exc:
+            logger.error("Error generating embedding: %s", exc)
+            raise EmbeddingError(f"Failed to generate embedding: {exc}") from exc
+
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for a batch of texts (more efficient).
-        
-        Args:
-            texts: List of texts to embed
-            
-        Returns:
-            List of embedding vectors
-            
-        Raises:
-            EmbeddingError: If embedding generation fails
-            
-        Example:
-            >>> texts = ["Python developer", "Java engineer", "DevOps specialist"]
-            >>> embeddings = service.embed_batch(texts)
-        """
+        """Generate semantic embeddings for a batch of resume texts."""
         if not texts:
             logger.error("Empty text list provided")
             raise EmbeddingError("Text list cannot be empty")
-        
+
         try:
-            logger.debug(f"Generating embeddings for batch of {len(texts)} texts")
+            logger.debug("Generating embeddings for batch of %s texts", len(texts))
             embeddings = self.model.encode(texts, convert_to_tensor=False).tolist()
-            logger.debug(f"Successfully generated {len(embeddings)} embeddings")
+            logger.debug("Successfully generated %s embeddings", len(embeddings))
             return embeddings
-            
-        except Exception as e:
-            logger.error(f"Error generating batch embeddings: {str(e)}")
-            raise EmbeddingError(f"Failed to generate embeddings: {str(e)}") from e
-    
-    def embed_and_store(
-        self,
-        chunks: List[Document],
-        batch_size: int = 32
-    ) -> int:
-        """
-        Generate embeddings for chunks and store them in ChromaDB.
-        
-        This function processes chunks in batches for efficiency,
-        generates embeddings, and stores them with metadata.
-        
-        Args:
-            chunks: List of Document chunks to embed and store
-            batch_size: Number of chunks to process in each batch (default: 32)
-            
-        Returns:
-            Number of chunks successfully stored
-            
-        Raises:
-            EmbeddingError: If embedding or storage fails
-            
-        Example:
-            >>> from src.chunking import chunk_text
-            >>> chunks = chunk_text(documents)
-            >>> num_stored = service.embed_and_store(chunks)
-            >>> print(f"Stored {num_stored} chunks")
-        """
-        if not chunks:
-            logger.warning("No chunks provided for embedding and storage")
-            raise EmbeddingError("Chunks list cannot be empty")
-        
-        logger.info(f"Starting embedding and storage of {len(chunks)} chunks "
-                   f"with batch_size={batch_size}")
-        
+        except Exception as exc:
+            logger.error("Error generating batch embeddings: %s", exc)
+            raise EmbeddingError(f"Failed to generate embeddings: {exc}") from exc
+
+    def embed_and_store(self, documents: List[Document], batch_size: int = 32) -> int:
+        """Embed full resume documents and store them in ChromaDB as one document each."""
+        if not documents:
+            logger.warning("No documents provided for embedding and storage")
+            raise EmbeddingError("Documents list cannot be empty")
+
+        logger.info("Starting embedding and storage of %s resume document(s)", len(documents))
+
         try:
-            # Extract texts and metadata
-            texts = [chunk.page_content for chunk in chunks]
-            
-            # Generate embeddings in batches
-            total_processed = 0
-            
-            for batch_start in range(0, len(chunks), batch_size):
-                batch_end = min(batch_start + batch_size, len(chunks))
-                batch_size_actual = batch_end - batch_start
-                
-                logger.debug(f"Processing batch {batch_start // batch_size + 1}: "
-                           f"chunks {batch_start} to {batch_end}")
-                
-                # Extract batch
-                batch_texts = texts[batch_start:batch_end]
-                batch_chunks = chunks[batch_start:batch_end]
-                
-                # Generate embeddings
-                batch_embeddings = self.embed_batch(batch_texts)
-                
-                # Prepare data for ChromaDB
-                ids = [f"chunk_{chunk.metadata.get('chunk_id', i)}" 
-                       for i, chunk in enumerate(batch_chunks)]
-                metadatas = [chunk.metadata for chunk in batch_chunks]
-                
-                # Store in ChromaDB
-                self.collection.add(
-                    ids=ids,
-                    embeddings=batch_embeddings,
-                    metadatas=metadatas,
-                    documents=batch_texts
-                )
-                
-                total_processed += batch_size_actual
-                logger.debug(f"Batch stored. Total processed: {total_processed}")
-            
-            logger.info(f"Successfully embedded and stored {total_processed} chunks")
-            return total_processed
-            
-        except Exception as e:
-            logger.error(f"Error during embedding and storage: {str(e)}")
-            raise EmbeddingError(
-                f"Failed to embed and store chunks: {str(e)}"
-            ) from e
-    
-    def search(
-        self,
-        query: str,
-        k: int = 5
-    ) -> List[Dict]:
-        """
-        Search for similar chunks using semantic similarity.
-        
-        Args:
-            query: Query text to search for
-            k: Number of results to return (default: 5)
-            
-        Returns:
-            List of search results with content and metadata
-            
-        Raises:
-            EmbeddingError: If search fails
-            
-        Example:
-            >>> results = service.search("Python developer with AI experience", k=3)
-            >>> for result in results:
-            ...     print(f"Match: {result['metadata']['filename']}")
-        """
+            texts = [document.page_content for document in documents]
+            embeddings = self.embed_batch(texts)
+
+            ids = [f"resume_{index}" for index in range(len(documents))]
+            metadatas = [self._prepare_metadata(document) for document in documents]
+
+            self.collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                metadatas=metadatas,
+                documents=texts,
+            )
+
+            logger.info("Successfully embedded and stored %s resume document(s)", len(documents))
+            return len(documents)
+        except Exception as exc:
+            logger.error("Error during embedding and storage: %s", exc)
+            raise EmbeddingError(f"Failed to embed and store documents: {exc}") from exc
+
+    def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
+        """Search the ChromaDB collection for semantically similar resumes."""
         if not query or not isinstance(query, str):
             logger.error("Invalid query for search")
             raise EmbeddingError("Query must be a non-empty string")
-        
+
         try:
-            logger.debug(f"Searching for: '{query}' (k={k})")
-            
-            # Generate query embedding
+            logger.debug("Searching for query '%s' (k=%s)", query, k)
             query_embedding = self.embed_text(query)
-            
-            # Search in ChromaDB
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=k
-            )
-            
-            # Format results
-            formatted_results = []
-            if results["ids"] and results["ids"][0]:  # Check if results exist
-                for i, chunk_id in enumerate(results["ids"][0]):
-                    formatted_results.append({
-                        "id": chunk_id,
-                        "content": results["documents"][0][i] if results["documents"] else "",
-                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                        "distance": results["distances"][0][i] if results["distances"] else 0
-                    })
-            
-            logger.debug(f"Found {len(formatted_results)} results")
+            results = self.collection.query(query_embeddings=[query_embedding], n_results=k)
+
+            formatted_results: List[Dict[str, Any]] = []
+            if results.get("ids") and results["ids"][0]:
+                for index, chunk_id in enumerate(results["ids"][0]):
+                    formatted_results.append(
+                        {
+                            "id": chunk_id,
+                            "content": results["documents"][0][index] if results.get("documents") else "",
+                            "metadata": results["metadatas"][0][index] if results.get("metadatas") else {},
+                            "distance": results["distances"][0][index] if results.get("distances") else 0,
+                        }
+                    )
+
+            logger.debug("Found %s result(s)", len(formatted_results))
             return formatted_results
-            
-        except Exception as e:
-            logger.error(f"Error during search: {str(e)}")
-            raise EmbeddingError(f"Failed to search: {str(e)}") from e
-    
-    def get_stats(self) -> dict:
-        """
-        Get statistics about the vector database.
-        
-        Returns:
-            Dictionary containing database statistics
-            
-        Example:
-            >>> stats = service.get_stats()
-            >>> print(f"Total chunks: {stats['total_chunks']}")
-        """
+        except Exception as exc:
+            logger.error("Error during search: %s", exc)
+            raise EmbeddingError(f"Failed to search: {exc}") from exc
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Return statistics about the ChromaDB collection."""
         try:
             count = self.collection.count()
-            
             return {
                 "model_name": self.model_name,
                 "embedding_dimension": self.model.get_sentence_embedding_dimension(),
-                "total_chunks": count,
+                "total_documents": count,
                 "collection_name": self.collection_name,
                 "db_path": self.db_path,
             }
-            
-        except Exception as e:
-            logger.error(f"Error getting stats: {str(e)}")
+        except Exception as exc:
+            logger.error("Error getting stats: %s", exc)
             return {}
-    
+
     def delete_collection(self) -> None:
-        """
-        Delete the current collection from the database.
-        
-        Warning: This action is irreversible.
-        
-        Example:
-            >>> # Clear old data and start fresh
-            >>> service.delete_collection()
-        """
+        """Delete and recreate the current ChromaDB collection."""
         try:
-            logger.warning(f"Deleting collection: {self.collection_name}")
+            logger.warning("Deleting collection '%s'", self.collection_name)
             self.client.delete_collection(name=self.collection_name)
-            
-            # Recreate empty collection
             self.collection = self.client.get_or_create_collection(
                 name=self.collection_name,
-                metadata={"hnsw:space": "cosine"}
+                metadata={"hnsw:space": "cosine"},
             )
-            logger.info(f"Collection {self.collection_name} deleted and recreated")
-            
-        except Exception as e:
-            logger.error(f"Error deleting collection: {str(e)}")
-            raise EmbeddingError(f"Failed to delete collection: {str(e)}") from e
+            logger.info("Collection '%s' deleted and recreated", self.collection_name)
+        except Exception as exc:
+            logger.error("Error deleting collection: %s", exc)
+            raise EmbeddingError(f"Failed to delete collection: {exc}") from exc
