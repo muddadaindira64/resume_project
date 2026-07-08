@@ -23,6 +23,8 @@ __pycache__/
 # Data and Databases
 *.db
 *.sqlite
+vector_db/
+results/
 
 # Resumes (Input data - not tracked)
 
@@ -42,3 +44,4 @@ temp/
 # OS
 .DS_Store
 Thumbs.db
+.bin
