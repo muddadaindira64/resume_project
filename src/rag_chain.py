@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 import logging
 import os
 import pickle
@@ -14,7 +22,7 @@ from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
+#from langchain_openai import ChatOpenAI
 
 from src.llm_prompt import build_chat_prompt
 
@@ -71,7 +79,7 @@ class ResumeRagPipeline:
             return ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), api_key=api_key)
 
         return ChatGoogleGenerativeAI(
-            model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             google_api_key=api_key,
         )
 
