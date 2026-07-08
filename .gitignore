@@ -8,3 +8,6 @@ vector_db/
 # Generated Results
 results/
 *.xlsx
+
+.env/
+**/.env
