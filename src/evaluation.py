@@ -62,5 +62,9 @@ def save_results(results: List[Dict[str, Any]], output_path: str | Path) -> Path
     output.parent.mkdir(parents=True, exist_ok=True)
 
     dataframe = pd.DataFrame(results)
+    if output.exists():
+        existing = pd.read_excel(output)
+        dataframe = pd.concat([existing, dataframe], ignore_index=True)
+
     dataframe.to_excel(output, index=False)
     return output

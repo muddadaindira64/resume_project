@@ -5,13 +5,9 @@ streamlit
 pypdf
 chromadb
 sentence-transformers
-transformers
-huggingface-hub
-tokenizers
 numpy
 python-dotenv
 pandas
 openpyxl
 scikit-learn
-faiss-cpu
 pydantic

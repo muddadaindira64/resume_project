@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 import chromadb
@@ -37,6 +38,8 @@ class ResumeRagPipeline:
 
         # Connect to ChromaDB collection
         self._connect_collection()
+        # Keep the old index alias for backward compatibility with existing tests and workflow
+        self.index = self.collection
         # Load documents metadata from collection
         self._load_documents_from_collection()
 
@@ -110,6 +113,74 @@ class ResumeRagPipeline:
             | StrOutputParser()
         )
 
+    def _normalize_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text.strip().lower())
+
+    def _extract_person_names(self) -> List[str]:
+        names = []
+        for document in self.documents:
+            metadata = document.get("metadata", {}) or {}
+            person_name = str(metadata.get("person_name", "")).strip()
+            if person_name and person_name.lower() not in {name.lower() for name in names}:
+                names.append(person_name)
+        return sorted(names, key=lambda value: -len(value))
+
+    def _match_person_name(self, question: str) -> List[str]:
+        normalized_question = self._normalize_text(question)
+        candidate_names = self._extract_person_names()
+
+        # Full name exact match first
+        exact_matches: List[str] = []
+        for person_name in candidate_names:
+            pattern = rf"\b{re.escape(person_name.lower())}\b"
+            if re.search(pattern, normalized_question):
+                exact_matches.append(person_name)
+
+        if exact_matches:
+            return exact_matches
+
+        # If no full-name match, use unique token-based candidate matching
+        question_tokens = set(re.findall(r"\b\w+\b", normalized_question))
+        token_matches: Dict[str, List[str]] = {}
+        for person_name in candidate_names:
+            name_tokens = set(re.findall(r"\b\w+\b", person_name.lower()))
+            for token in name_tokens & question_tokens:
+                token_matches.setdefault(token, []).append(person_name)
+
+        unique_matches: List[str] = []
+        for token, names in token_matches.items():
+            if len(names) == 1 and names[0] not in unique_matches:
+                unique_matches.append(names[0])
+
+        return unique_matches
+
+    def _is_comparison_query(self, question: str) -> bool:
+        normalized_question = self._normalize_text(question)
+        return bool(re.search(r"\b(compare|versus|vs|between)\b", normalized_question))
+
+    def _format_query_results(self, results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        formatted_results: List[Dict[str, Any]] = []
+        if results.get("ids") and results["ids"][0]:
+            for index, _id in enumerate(results["ids"][0]):
+                formatted_results.append(
+                    {
+                        "id": _id,
+                        "text": results.get("documents", [[""]])[0][index] if results.get("documents") else "",
+                        "metadata": results.get("metadatas", [[{}]])[0][index] if results.get("metadatas") else {},
+                        "distance": results.get("distances", [[0]])[0][index] if results.get("distances") else 0,
+                    }
+                )
+        return formatted_results
+
+    def _query_collection(self, query_embedding: np.ndarray, top_k: int = 1, where: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+        try:
+            embedding_list = query_embedding.tolist()[0]
+            results = self.collection.query(query_embeddings=[embedding_list], n_results=top_k, where=where)
+            return self._format_query_results(results)
+        except Exception as exc:
+            logger.error("Error querying ChromaDB collection: %s", exc)
+            return []
+
     def _embed_query(self, query: str) -> np.ndarray:
         try:
             from sentence_transformers import SentenceTransformer
@@ -123,73 +194,41 @@ class ResumeRagPipeline:
         embedding = np.asarray(embedding, dtype="float32")
         return embedding
 
-    def retrieve(self, question: str, person_name: str | None = None, top_k: int = 3) -> List[Dict[str, Any]]:
-        """Retrieve the most relevant resume documents for a question and optional person filter."""
+    def retrieve(self, question: str, top_k: int = 3) -> List[Dict[str, Any]]:
+        """Retrieve the most relevant resume documents for a question."""
         if self.collection is None:
             raise RagPipelineError("ChromaDB collection has not been loaded")
-        logger.debug("Retrieval requested. person_name=%s, question='%s', top_k=%s", person_name, question, top_k)
 
-        # If a person_name is provided, try to restrict the retrieval to documents
-        # that belong to that person (case-insensitive exact match). This ensures
-        # the returned results are strictly from the selected person.
-        if person_name:
-            # Use ChromaDB metadata filtering (where) to restrict retrieval to this person_name
-            try:
-                query_embedding = self._embed_query(question)
-                # Chroma expects plain python lists
-                embedding_list = query_embedding.tolist()[0]
-                # Perform metadata-filtered query
-                results = self.collection.query(query_embeddings=[embedding_list], n_results=top_k, where={"person_name": person_name})
-
-                formatted_results: List[Dict[str, Any]] = []
-                if results.get("ids") and results["ids"][0]:
-                    for index, _id in enumerate(results["ids"][0]):
-                        formatted_results.append(
-                            {
-                                "id": _id,
-                                "text": results.get("documents", [[""]])[0][index] if results.get("documents") else "",
-                                "metadata": results.get("metadatas", [[{}]])[0][index] if results.get("metadatas") else {},
-                                "distance": results.get("distances", [[0]])[0][index] if results.get("distances") else 0,
-                            }
-                        )
-
-                logger.debug("Person-filtered retrieval returned %s results for '%s'", len(formatted_results), person_name)
-                return formatted_results
-            except Exception as exc:
-                logger.error("Error during Chroma person-filtered retrieval: %s", exc)
-                return []
-
-        # Default: global retrieval across the whole index
-        # Global (unfiltered) retrieval using ChromaDB
-        try:
-            query_embedding = self._embed_query(question)
-            embedding_list = query_embedding.tolist()[0]
-            results = self.collection.query(query_embeddings=[embedding_list], n_results=top_k)
-
-            formatted_results: List[Dict[str, Any]] = []
-            if results.get("ids") and results["ids"][0]:
-                for index, _id in enumerate(results["ids"][0]):
-                    formatted_results.append(
-                        {
-                            "id": _id,
-                            "text": results.get("documents", [[""]])[0][index] if results.get("documents") else "",
-                            "metadata": results.get("metadatas", [[{}]])[0][index] if results.get("metadatas") else {},
-                            "distance": results.get("distances", [[0]])[0][index] if results.get("distances") else 0,
-                        }
-                    )
-
-            logger.debug("Global Chroma retrieval returned %s candidates", len(formatted_results))
-            return formatted_results
-        except Exception as exc:
-            logger.error("Error during Chroma global retrieval: %s", exc)
+        logger.debug("Retrieval requested for question='%s' top_k=%s", question, top_k)
+        if not question.strip():
             return []
 
-    def answer_question(self, question: str, person_name: str | None = None) -> Dict[str, Any]:
+        query_embedding = self._embed_query(question)
+        matched_names = self._match_person_name(question)
+
+        if matched_names and not self._is_comparison_query(question):
+            if len(matched_names) == 1:
+                selected_person = matched_names[0]
+                logger.debug("Detected candidate name in question: %s", selected_person)
+                return self._query_collection(query_embedding, top_k=1, where={"person_name": selected_person})
+
+            logger.debug("Ambiguous name match detected; falling back to semantic retrieval")
+
+        if matched_names and self._is_comparison_query(question):
+            logger.debug("Comparison query detected for candidates: %s", matched_names)
+            candidates: List[Dict[str, Any]] = []
+            for person_name in matched_names:
+                candidates.extend(self._query_collection(query_embedding, top_k=1, where={"person_name": person_name}))
+            return sorted(candidates, key=lambda item: item.get("distance", 0))[:top_k]
+
+        return self._query_collection(query_embedding, top_k=top_k)
+
+    def answer_question(self, question: str) -> Dict[str, Any]:
         """Retrieve the best matching resume and generate an answer using the LLM."""
-        candidates = self.retrieve(question, person_name=person_name, top_k=3)
+        candidates = self.retrieve(question, top_k=3)
         if not candidates:
             return {
-                "answer": "The requested information is not available in the selected resume.",
+                "answer": "The requested information is not available.",
                 "context": "",
                 "source": None,
                 "retrieval_results": [],
@@ -197,14 +236,13 @@ class ResumeRagPipeline:
 
         selected = candidates[0]
         context = selected["text"]
-        question_to_llm = question
         if self.chain is None or self.llm is None:
-            answer = "The requested information is not available in the selected resume."
+            answer = "The requested information is not available."
         else:
-            answer = self.chain.invoke({"context": context, "question": question_to_llm})
+            answer = self.chain.invoke({"context": context, "question": question})
 
         return {
-            "answer": answer.strip() or "The requested information is not available in the selected resume.",
+            "answer": str(answer).strip() if answer else "The requested information is not available.",
             "context": context,
             "source": selected["metadata"].get("source", None),
             "retrieval_results": candidates,
