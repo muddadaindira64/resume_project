@@ -23,6 +23,7 @@ __pycache__/
 # Data and Databases
 *.db
 *.sqlite
+vector_db/
 
 # Resumes (Input data - not tracked)
 
