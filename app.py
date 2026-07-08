@@ -62,8 +62,37 @@ question = st.text_area(
 
 if st.button("Generate Answer", type="primary"):
     with st.spinner("Retrieving the best resume match and generating an answer..."):
-        pipeline = load_pipeline()
-        result = pipeline.answer_question(question, person_name=selected_person)
+            pipeline = load_pipeline()
+
+            # Perform a retrieval restricted to the selected person and log results
+            candidates = pipeline.retrieve(question, person_name=selected_person, top_k=5)
+            logging.getLogger(__name__).info("Selected person: %s; Retrieved %s candidate(s)", selected_person, len(candidates))
+            for c in candidates:
+                logging.getLogger(__name__).debug("Candidate id=%s source=%s distance=%s", c.get("id"), c.get("metadata", {}).get("source"), c.get("distance"))
+
+            if not candidates:
+                st.error(f"No documents found for '{selected_person}' or no matching content in that resume.")
+                result = {
+                    "answer": "The requested information is not available in the selected resume.",
+                    "context": "",
+                    "source": None,
+                    "retrieval_results": [],
+                }
+            else:
+                # Use the top candidate for generation
+                top = candidates[0]
+                pipeline_candidate_context = top.get("text", "")
+                if pipeline.chain is None or pipeline.llm is None:
+                    answer = "The requested information is not available in the selected resume."
+                else:
+                    answer = pipeline.chain.invoke({"context": pipeline_candidate_context, "question": question})
+
+                result = {
+                    "answer": answer.strip() if isinstance(answer, str) else str(answer),
+                    "context": pipeline_candidate_context,
+                    "source": top.get("metadata", {}).get("source") or top.get("metadata", {}).get("source_filename"),
+                    "retrieval_results": candidates,
+                }
 
     st.subheader("Selected Person")
     st.write(selected_person)
