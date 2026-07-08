@@ -1,47 +1,10 @@
-# Virtual Environment
-venv/
-env/
-*.egg-info/
-dist/
-build/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Data and Databases
-*.db
-*.sqlite
-vector_db/
-results/
-
-# Resumes (Input data - not tracked)
-
-# Environment variables
-.env
-.env.local
-
-# Logs
-logs/
-*.log
-
-# Temporary files
-.tmp
-temp/
-*.cache
-
 # OS
 .DS_Store
 Thumbs.db
-.bin
+
+# Vector Database (RAG embeddings)
+vector_db/
+
+# Generated Results
+results/
+*.xlsx

@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 import logging
 import os
 import re
@@ -13,7 +21,7 @@ from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
+#from langchain_openai import ChatOpenAI
 
 from src.llm_prompt import build_chat_prompt
 
