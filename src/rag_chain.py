@@ -101,12 +101,13 @@ class ResumeRagPipeline:
             logger.warning("No LLM API key found; using a placeholder fallback")
             return None
 
-        if provider == "openai":
-            return ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), api_key=api_key)
+        #if provider == "openai":
+            #return ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), api_key=api_key)
 
         return ChatGoogleGenerativeAI(
             model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             google_api_key=api_key,
+            temperature=0,
         )
 
     def _build_chain(self):
